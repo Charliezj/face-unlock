@@ -1,0 +1,15 @@
+# 录入数据与日志
+features.npy
+meta.json
+run.log
+autolock.log
+
+# 模型（38 MB，按 README 自行下载）
+models/*.onnx
+
+# Python
+__pycache__/
+*.pyc
+
+# 界面截图
+*.png

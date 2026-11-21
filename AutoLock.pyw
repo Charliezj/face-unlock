@@ -2,7 +2,7 @@
 """
 AutoLock —— 离座自动人脸锁
 
-常驼托盘，摄像头低频检测画面里有没有人；连续 idle_sec 秒没人，就自动拉起
+常驻托盘，摄像头低频检测画面里有没有人；连续 idle_sec 秒没人，就自动拉起
 全屏人脸锁，回来刷脸解开。
 
 配置文件：autolock.json
@@ -10,7 +10,7 @@ AutoLock —— 离座自动人脸锁
     min_face_px  脸宽多少像素算“人在”（默认 100，太小的脸视为走远）
 
 用法：
-    AutoLock.pyw            正常常驼
+    AutoLock.pyw            正常常驻
     AutoLock.pyw --selftest 自检 8 秒后自动退出（不锁屏）
 """
 

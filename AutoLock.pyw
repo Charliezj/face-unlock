@@ -26,7 +26,6 @@ import importlib.util
 from ctypes import wintypes
 
 import tkinter as tk
-import cv2
 import pystray
 from PIL import Image, ImageDraw
 
@@ -389,7 +388,7 @@ def main():
 
     if not selftest:
         if not single_instance():
-            log("another instance already running, exit")
+            # 看门狗每 5 分钟会拉一次，已在跑时静默退出，不刷日志
             return
 
     core = None

@@ -19,9 +19,11 @@ import sys
 import json
 import time
 import queue
+import ctypes
 import threading
 import traceback
 import importlib.util
+from ctypes import wintypes
 
 import tkinter as tk
 import cv2
@@ -37,6 +39,66 @@ ACCENT = (102, 191, 178, 255)
 DARK = (11, 13, 16, 255)
 _LOG_LOCK = threading.Lock()
 _INSTANCE_HANDLE = None
+
+WM_HOTKEY = 0x0312
+HOTKEY_ID = 0xA71
+HOTKEY_CANDIDATES = ("ctrl+alt+l", "ctrl+alt+shift+l", "win+alt+l", "ctrl+alt+shift+f10")
+MOD_ALT = 0x0001
+MOD_CONTROL = 0x0002
+MOD_SHIFT = 0x0004
+MOD_WIN = 0x0008
+MOD_NOREPEAT = 0x4000
+
+NAMED_KEYS = {
+    "space": 0x20, "enter": 0x0D, "return": 0x0D, "tab": 0x09,
+    "esc": 0x1B, "escape": 0x1B, "backspace": 0x08, "delete": 0x2E,
+    "insert": 0x2D, "home": 0x24, "end": 0x23, "pageup": 0x21,
+    "pagedown": 0x22, "up": 0x26, "down": 0x28, "left": 0x25, "right": 0x27,
+}
+NAMED_LABEL = {
+    "space": "Space", "enter": "Enter", "return": "Enter", "tab": "Tab",
+    "esc": "Esc", "escape": "Esc", "backspace": "Backspace",
+    "delete": "Delete", "insert": "Insert", "home": "Home", "end": "End",
+    "pageup": "PageUp", "pagedown": "PageDown", "up": "Up", "down": "Down",
+    "left": "Left", "right": "Right",
+}
+
+
+def parse_hotkey(text):
+    """把 "ctrl+alt+l" 解析成 (修饰键掩码, 虚拟键码, 显示名)。"""
+    parts = [p.strip().lower() for p in str(text).split("+") if p.strip()]
+    if not parts:
+        raise ValueError("快捷键是空的")
+    mods = 0
+    vk = None
+    labels = []
+    for p in parts:
+        if p in ("ctrl", "control"):
+            mods |= MOD_CONTROL
+            labels.append("Ctrl")
+        elif p == "alt":
+            mods |= MOD_ALT
+            labels.append("Alt")
+        elif p == "shift":
+            mods |= MOD_SHIFT
+            labels.append("Shift")
+        elif p in ("win", "windows", "cmd", "meta"):
+            mods |= MOD_WIN
+            labels.append("Win")
+        elif p in NAMED_KEYS:
+            vk = NAMED_KEYS[p]
+            labels.append(NAMED_LABEL[p])
+        elif len(p) == 1 and p.isalnum():
+            vk = ord(p.upper())
+            labels.append(p.upper())
+        elif p[0] == "f" and p[1:].isdigit() and 1 <= int(p[1:]) <= 12:
+            vk = 0x6F + int(p[1:])
+            labels.append("F" + p[1:])
+        else:
+            raise ValueError("不认识的按键：%s" % p)
+    if vk is None:
+        raise ValueError("缺少主键，要写成 ctrl+alt+l 这样")
+    return mods, vk, "+".join(labels)
 
 
 def single_instance():
@@ -68,7 +130,7 @@ def load_core():
 
 
 def load_conf():
-    default = {"idle_sec": 45, "min_face_px": 100}
+    default = {"idle_sec": 45, "min_face_px": 100, "hotkey": "ctrl+alt+l"}
     try:
         with open(CONF_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -261,6 +323,67 @@ class Guard:
         return "状态：监测中（%d 秒后锁）" % left
 
 
+class Hotkey:
+    """后台线程注册系统级热键，按下就把锁屏拉起来（走主线程队列）。"""
+
+    def __init__(self, guard, text):
+        self.guard = guard
+        self.text = (text or "ctrl+alt+l").strip()
+        self.state = "pending"
+        self.error = ""
+
+    def start(self):
+        t = threading.Thread(target=self._run, name="hotkey", daemon=True)
+        t.start()
+        return t
+
+    def _run(self):
+        try:
+            mods, vk, pretty = parse_hotkey(self.text)
+        except Exception as e:
+            self.state = "fail"
+            self.error = str(e)
+            log("hotkey config invalid: %s" % e)
+            return
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        tries = [(mods, vk, pretty)]
+        for fb in HOTKEY_CANDIDATES:
+            if fb == self.text.lower():
+                continue
+            try:
+                fm, fk, fp = parse_hotkey(fb)
+            except Exception:
+                continue
+            tries.append((fm, fk, fp))
+
+        chosen = None
+        for m, k, p in tries:
+            if user32.RegisterHotKey(None, HOTKEY_ID, m | MOD_NOREPEAT, k):
+                chosen = p
+                break
+            log("hotkey %s unavailable, err=%d" % (p, ctypes.get_last_error()))
+        if chosen is None:
+            self.state = "fail"
+            self.error = "候选快捷键都被占用"
+            log("hotkey: no candidate available")
+            return
+        self.text = chosen
+        self.state = "ok"
+        if chosen == pretty:
+            log("hotkey registered: %s" % chosen)
+        else:
+            log("hotkey registered: %s（首选 %s 被占用，已回退）" % (chosen, pretty))
+
+        msg = wintypes.MSG()
+        while True:
+            ret = user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
+            if ret == 0 or ret == -1:
+                break
+            if msg.message == WM_HOTKEY:
+                log("hotkey pressed")
+                self.guard.q.put(self.guard.lock_now)
+
+
 def main():
     selftest = "--selftest" in sys.argv[1:]
 
@@ -299,12 +422,23 @@ def main():
     guard.meta = meta
     guard.refs = refs
 
+    hotkey = Hotkey(guard, conf.get("hotkey", "ctrl+alt+l"))
+    if not selftest:
+        hotkey.start()
+
     def on_quit(icon, item):
         guard.quit(icon)
 
+    def lock_label(item=None):
+        if hotkey.state == "ok":
+            return "立即锁定（%s）" % hotkey.text
+        if hotkey.state == "fail":
+            return "立即锁定（快捷键不可用）"
+        return "立即锁定"
+
     menu = pystray.Menu(
         pystray.MenuItem(guard.status_text, None, enabled=False),
-        pystray.MenuItem("立即锁定", guard.lock_now),
+        pystray.MenuItem(lock_label, guard.lock_now),
         pystray.MenuItem("暂停监测", guard.toggle_pause),
         pystray.MenuItem("退出", on_quit),
     )

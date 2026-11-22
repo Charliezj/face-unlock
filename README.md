@@ -9,6 +9,7 @@
 - **离座自动锁**：托盘常驻，摄像头每 1.2 秒看一眼；连续 45 秒（可配）画面里没有脸，自动拉起全屏锁
 - **静默识别**：锁屏界面不显示摄像头画面，只有旋转的扫描环和状态文字；影像只在内存里逐帧比对，不渲染、不落盘
 - **五项防误识**：阈值 0.505、最近 5 帧特征平均、活体微动检测、脸宽 ≥110 像素、连续失败冷却
+- **全局热键**：`Ctrl+Alt+Shift+L` 随时锁定，前台任意程序下都生效；首选组合被占用时按候选列表自动回退
 - **单实例保护**：多入口同时启动只会保留一个进程
 - **纯本地**：OpenCV YuNet + SFace，模型 ONNX 文件放本地，无网络请求
 
@@ -33,7 +34,7 @@ AutoLock.pyw        托盘常驻离座锁，--selftest 自检
 启动人脸锁.bat       手动锁屏入口
 启动自动锁.bat       托盘常驻入口
 使用说明.md          面向使用者的中文说明
-autolock.json       自动锁配置（idle_sec / min_face_px）
+autolock.json       自动锁配置（idle_sec / min_face_px / hotkey）
 models/             模型目录（仓库不含，见下）
 ```
 
@@ -71,6 +72,7 @@ pip install opencv-contrib-python numpy pillow pystray
 | --- | --- | --- |
 | `idle_sec` | 多久没人算离座 | 45 |
 | `min_face_px` | 脸宽多少像素算“在座” | 100 |
+| `hotkey` | 全局锁定快捷键，写法如 `ctrl+alt+shift+l` | `ctrl+alt+l` |
 
 `meta.json` 里的 `thr` 是判定阈值。本人解不开就降到 0.46；要更严防认错人可提到 0.56～0.60。
 
